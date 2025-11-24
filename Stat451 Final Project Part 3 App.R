@@ -5,7 +5,9 @@ library(readr)
 library(ggplot2)
 library(plotly)
 
-# Load Data
+# ------------------------------------------------------------
+# Load Exams Data
+# ------------------------------------------------------------
 exams <- read_csv("exams.csv", show_col_types = FALSE)
 
 exams_clean <- exams %>%
@@ -88,6 +90,31 @@ dat_4 <- exams_avg1 %>%
   mutate(Exam_Subject = factor(Exam_Subject, 
                                levels = unique(Exam_Subject)))
 
+# ------------------------------------------------------------
+# Load student data
+# ------------------------------------------------------------
+students <- read_csv("students.csv") %>%
+  rename(Exam.Subject = `Exam Subject`)  # rename immediately
+  
+students1 <- students %>%
+  filter(!str_detect(Exam.Subject, "ALL SUBJECTS")) %>%
+  rename_with(~ str_replace_all(., c("^Students \\(" = "", "\\)$" = "", "\\s*/\\s*" = "/")),
+              starts_with("Students ("))
+  
+race_cols <- c(
+  "White", "Black", "Hispanic/Latino", "Asian",
+  "American Indian/Alaska Native", "Native Hawaiian/Pacific Islander",
+  "Two or More Races", "Other Race", "Race Not Known"
+)
+  
+grade_cols <- c(
+  "9th Grade", "10th Grade", "11th Grade", "12th Grade",
+  "Not High School", "> 9th Grade", "Grade Not Known"
+)
+  
+students2 <- students1 %>%
+  mutate(total_grade_sum = rowSums(across(all_of(grade_cols)), na.rm = TRUE))
+  
 
 # UI
 ui <- dashboardPage(
@@ -212,14 +239,7 @@ ui <- dashboardPage(
                                 selected = 10),
                     plotOutput("students_racePlot", height = "800px")
                 )
-              ),
-              fluidRow(
-                box(width = 12, status = "info", solidHeader = TRUE,
-                    title = "Static: Heatmap of AP Subject Participation by Race (Top 10)",
-                    plotOutput("students_racePlot_static", height = "800px")
-                )
               )
-      ),
       
       # ---- Students CSV: Grade & AP Subject ----
       tabItem(tabName = "students_grade",
@@ -230,12 +250,6 @@ ui <- dashboardPage(
                                 choices = c("5" = 5, "10" = 10, "15" = 15, "20" = 20, "30" = 30, "All Subjects" = 37),
                                 selected = 10),
                     plotOutput("students_gradePlot", height = "520px")
-                )
-              ),
-              fluidRow(
-                box(width = 12, status = "info", solidHeader = TRUE,
-                    title = "Static: Grade Distribution for Most Taken AP Subjects",
-                    plotOutput("students_gradePlot_static", height = "520px")
                 )
               )
       )
@@ -356,34 +370,8 @@ server <- function(input, output, session) {
       theme_bw()
   })
   
-  # ---- Students CSV Tabs ----
   # -----------------------------
-  # Students CSV: Load and prepare data
-  # -----------------------------
-  students <- read_csv("students.csv") %>%
-    rename(Exam.Subject = `Exam Subject`)  # rename immediately
-  
-  students1 <- students %>%
-    filter(!str_detect(Exam.Subject, "ALL SUBJECTS")) %>%
-    rename_with(~ str_replace_all(., c("^Students \\(" = "", "\\)$" = "", "\\s*/\\s*" = "/")),
-                starts_with("Students ("))
-  
-  race_cols <- c(
-    "White", "Black", "Hispanic/Latino", "Asian",
-    "American Indian/Alaska Native", "Native Hawaiian/Pacific Islander",
-    "Two or More Races", "Other Race", "Race Not Known"
-  )
-  
-  grade_cols <- c(
-    "9th Grade", "10th Grade", "11th Grade", "12th Grade",
-    "Not High School", "> 9th Grade", "Grade Not Known"
-  )
-  
-  students2 <- students1 %>%
-    mutate(total_grade_sum = rowSums(across(all_of(grade_cols)), na.rm = TRUE))
-  
-  # -----------------------------
-  # Students: Race Interactive
+  # Students: Race VS AP Subject
   # -----------------------------
   output$students_racePlot <- renderPlot({
     race_long <- students1 %>%
@@ -419,40 +407,7 @@ server <- function(input, output, session) {
   })
   
   # -----------------------------
-  # Students: Race Static (Top 10)
-  # -----------------------------
-  output$students_racePlot_static <- renderPlot({
-    TOP_N <- 10
-    race_long <- students1 %>%
-      select(Exam.Subject, all_of(race_cols)) %>%
-      pivot_longer(cols = all_of(race_cols), names_to = "Race", values_to = "Count") %>%
-      mutate(
-        Count = coalesce(Count, 0),
-        Race = factor(Race, levels = race_cols)
-      ) %>%
-      group_by(Race) %>%
-      mutate(share = Count / sum(Count, na.rm = TRUE)) %>%
-      ungroup()
-    
-    race_long_f <- race_long %>%
-      group_by(Race) %>%
-      slice_max(order_by = share, n = TOP_N, with_ties = FALSE) %>%
-      ungroup() %>%
-      group_by(Exam.Subject) %>%
-      mutate(max_share = max(share)) %>%
-      ungroup() %>%
-      mutate(Exam.Subject = fct_reorder(Exam.Subject, max_share))
-    
-    ggplot(race_long_f, aes(x = Race, y = Exam.Subject, fill = share)) +
-      geom_tile(color = "white", linewidth = 0.2) +
-      scale_fill_viridis_c(labels = scales::percent, option = "C") +
-      scale_y_discrete(labels = function(x) stringr::str_wrap(x, width = 30)) +
-      labs(x = "Race", y = "AP Subject", fill = "Share") +
-      theme_minimal(base_size = 13)+ theme(axis.text.x = element_text(angle = 45, hjust = 1))
-  })
-  
-  # -----------------------------
-  # Students: Grade Interactive
+  # Students: Grade VS AP Subject
   # -----------------------------
   output$students_gradePlot <- renderPlot({
     top_subjects <- students2 %>%
@@ -486,42 +441,7 @@ server <- function(input, output, session) {
         x = "AP Subject", y = "Share of test takers", fill = "Grade"
       ) +
       theme_minimal(base_size = 13)
-  })
-  
-  # -----------------------------
-  # Students: Grade Static (Top 10)
-  # -----------------------------
-  output$students_gradePlot_static <- renderPlot({
-    top_k <- 10
-    top_subjects <- students2 %>%
-      slice_max(order_by = total_grade_sum, n = top_k, with_ties = FALSE) %>%
-      pull(Exam.Subject)
-    
-    grade_long <- students2 %>%
-      filter(Exam.Subject %in% top_subjects) %>%
-      select(Exam.Subject, all_of(grade_cols)) %>%
-      pivot_longer(all_of(grade_cols), names_to = "Grade", values_to = "Count") %>%
-      mutate(
-        Count = coalesce(Count, 0),
-        Grade = factor(Grade, levels = grade_cols)
-      ) %>%
-      group_by(Exam.Subject) %>%
-      mutate(
-        subject_total = sum(Count, na.rm = TRUE),
-        pct = if_else(subject_total > 0, Count / subject_total, 0)
-      ) %>%
-      ungroup() %>%
-      mutate(Exam.Subject = fct_relevel(Exam.Subject, top_subjects))
-    
-    ggplot(grade_long, aes(x = Exam.Subject, y = pct, fill = Grade)) +
-      geom_col(position = "fill") +
-      coord_flip() +
-      scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
-      scale_fill_brewer(palette = "Set2") +
-      labs(x = "AP Subject", y = "Share of test takers", fill = "Grade") +
-      theme_minimal(base_size = 13)
-  })
-  
+  }) 
 }
 
 
